@@ -5,8 +5,10 @@ from .transforms import (LetterResize, LoadAnnotations, PPYOLOERandomCrop,
                          RemoveDataElement, YOLOv5CopyPaste,
                          YOLOv5HSVRandomAug, YOLOv5KeepRatioResize,
                          YOLOv5RandomAffine)
+from .loading import LoadMultiChannelImage
 
 __all__ = [
+    'LoadMultiChannelImage',
     'YOLOv5KeepRatioResize', 'LetterResize', 'Mosaic', 'YOLOXMixUp',
     'YOLOv5MixUp', 'YOLOv5HSVRandomAug', 'LoadAnnotations',
     'YOLOv5RandomAffine', 'PPYOLOERandomDistort', 'PPYOLOERandomCrop',
