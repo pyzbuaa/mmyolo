@@ -324,7 +324,7 @@ class Mosaic(BaseMixImageTransform):
 
         if len(results['img'].shape) == 3:
             mosaic_img = np.full(
-                (int(img_scale_h * 2), int(img_scale_w * 2), 3),
+                (int(img_scale_h * 2), int(img_scale_w * 2), results['img'].shape[-1]),
                 self.pad_val,
                 dtype=results['img'].dtype)
         else:
