@@ -10,6 +10,7 @@ from mmdet.utils import ConfigType, OptMultiConfig
 from mmyolo.registry import MODELS
 from ..utils import make_divisible, make_round
 from .base_yolo_neck import BaseYOLONeck
+from ..layers import VarGCSPLayer
 
 
 @MODELS.register_module()
@@ -36,6 +37,7 @@ class YOLOv5PAFPN(BaseYOLONeck):
     def __init__(self,
                  in_channels: List[int],
                  out_channels: Union[List[int], int],
+                 use_vargblock: bool = False,
                  deepen_factor: float = 1.0,
                  widen_factor: float = 1.0,
                  num_csp_blocks: int = 1,
@@ -45,6 +47,7 @@ class YOLOv5PAFPN(BaseYOLONeck):
                  act_cfg: ConfigType = dict(type='SiLU', inplace=True),
                  init_cfg: OptMultiConfig = None):
         self.num_csp_blocks = num_csp_blocks
+        self.use_vargblock = use_vargblock
         super().__init__(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -100,9 +103,9 @@ class YOLOv5PAFPN(BaseYOLONeck):
         Returns:
             nn.Module: The top down layer.
         """
-
+        CSP = VarGCSPLayer if self.use_vargblock else CSPLayer
         if idx == 1:
-            return CSPLayer(
+            return CSP(
                 make_divisible(self.in_channels[idx - 1] * 2,
                                self.widen_factor),
                 make_divisible(self.in_channels[idx - 1], self.widen_factor),
@@ -112,7 +115,7 @@ class YOLOv5PAFPN(BaseYOLONeck):
                 act_cfg=self.act_cfg)
         else:
             return nn.Sequential(
-                CSPLayer(
+                CSP(
                     make_divisible(self.in_channels[idx - 1] * 2,
                                    self.widen_factor),
                     make_divisible(self.in_channels[idx - 1],
@@ -158,7 +161,8 @@ class YOLOv5PAFPN(BaseYOLONeck):
         Returns:
             nn.Module: The bottom up layer.
         """
-        return CSPLayer(
+        CSP = VarGCSPLayer if self.use_vargblock else CSPLayer
+        return CSP(
             make_divisible(self.in_channels[idx] * 2, self.widen_factor),
             make_divisible(self.in_channels[idx + 1], self.widen_factor),
             num_blocks=make_round(self.num_csp_blocks, self.deepen_factor),

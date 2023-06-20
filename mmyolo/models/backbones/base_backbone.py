@@ -76,7 +76,6 @@ class BaseBackbone(BaseModule, metaclass=ABCMeta):
 
     def __init__(self,
                  arch_setting: list,
-                 use_vargblock: bool = False,
                  deepen_factor: float = 1.0,
                  widen_factor: float = 1.0,
                  input_channels: int = 3,
@@ -99,7 +98,6 @@ class BaseBackbone(BaseModule, metaclass=ABCMeta):
                              'len(arch_setting) + 1). But received '
                              f'{frozen_stages}')
 
-        self.use_vargblock = use_vargblock
         self.input_channels = input_channels
         self.out_indices = out_indices
         self.frozen_stages = frozen_stages
