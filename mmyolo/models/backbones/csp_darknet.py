@@ -3,14 +3,155 @@ from typing import List, Tuple, Union
 
 import torch
 import torch.nn as nn
+from mmengine.model import BaseModule
 from mmcv.cnn import ConvModule, DepthwiseSeparableConvModule
 from mmdet.models.backbones.csp_darknet import CSPLayer, Focus
-from mmdet.utils import ConfigType, OptMultiConfig
+from mmdet.models.layers import ChannelAttention
+from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
 
 from mmyolo.registry import MODELS
 from ..layers import CSPLayerWithTwoConv, SPPFBottleneck
 from ..utils import make_divisible, make_round
 from .base_backbone import BaseBackbone
+
+
+class VarGBlock(BaseModule):
+
+    def __init__(self,
+                 in_channels: int,
+                 out_channels: int,
+                 factor: float = 2.0,
+                 group_base: int = 8,
+                 add_identity: bool = True,
+                 norm_cfg: ConfigType = dict(
+                     type='BN', momentum=0.03, eps=0.001),
+                 act_cfg: ConfigType = dict(type='LeakyReLU'),
+                 init_cfg: OptMultiConfig = None) -> None:
+        super().__init__(init_cfg=init_cfg)
+        mid_channels = out_channels if factor == 1 else int(in_channels * factor)
+        groups = int(in_channels / group_base)
+        self.conv1 = ConvModule(
+            in_channels,
+            mid_channels,
+            3,
+            stride=1,
+            padding=1,
+            groups=groups,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
+        self.conv2 = ConvModule(
+            mid_channels,
+            out_channels,
+            1,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
+        self.add_identity = \
+            add_identity and in_channels == out_channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward function."""
+        identity = x
+        out = self.conv1(x)
+        out = self.conv2(out)
+
+        if self.add_identity:
+            return out + identity
+        else:
+            return out
+
+
+class VarGCSPLayer(BaseModule):
+    """Cross Stage Partial Layer.
+
+    Args:
+        in_channels (int): The input channels of the CSP layer.
+        out_channels (int): The output channels of the CSP layer.
+        expand_ratio (float): Ratio to adjust the number of channels of the
+            hidden layer. Defaults to 0.5.
+        num_blocks (int): Number of blocks. Defaults to 1.
+        add_identity (bool): Whether to add identity in blocks.
+            Defaults to True.
+        use_cspnext_block (bool): Whether to use CSPNeXt block.
+            Defaults to False.
+        use_depthwise (bool): Whether to use depthwise separable convolution in
+            blocks. Defaults to False.
+        channel_attention (bool): Whether to add channel attention in each
+            stage. Defaults to True.
+        conv_cfg (dict, optional): Config dict for convolution layer.
+            Defaults to None, which means using conv2d.
+        norm_cfg (dict): Config dict for normalization layer.
+            Defaults to dict(type='BN')
+        act_cfg (dict): Config dict for activation layer.
+            Defaults to dict(type='Swish')
+        init_cfg (:obj:`ConfigDict` or dict or list[dict] or
+            list[:obj:`ConfigDict`], optional): Initialization config dict.
+            Defaults to None.
+    """
+
+    def __init__(self,
+                 in_channels: int,
+                 out_channels: int,
+                 expand_ratio: float = 0.5,
+                 num_blocks: int = 1,
+                 add_identity: bool = True,
+                 channel_attention: bool = False,
+                 conv_cfg: OptConfigType = None,
+                 norm_cfg: ConfigType = dict(
+                     type='BN', momentum=0.03, eps=0.001),
+                 act_cfg: ConfigType = dict(type='LeakyReLU'),
+                 init_cfg: OptMultiConfig = None) -> None:
+        super().__init__(init_cfg=init_cfg)
+        block = VarGBlock
+        mid_channels = int(out_channels * expand_ratio)
+        self.channel_attention = channel_attention
+        self.main_conv = ConvModule(
+            in_channels,
+            mid_channels,
+            1,
+            conv_cfg=conv_cfg,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
+        self.short_conv = ConvModule(
+            in_channels,
+            mid_channels,
+            1,
+            conv_cfg=conv_cfg,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
+        self.final_conv = ConvModule(
+            2 * mid_channels,
+            out_channels,
+            1,
+            conv_cfg=conv_cfg,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
+
+        self.blocks = nn.Sequential(*[
+            block(
+                mid_channels,
+                mid_channels,
+                factor=2.0,
+                group_base=8,
+                add_identity=add_identity,
+                conv_cfg=conv_cfg,
+                norm_cfg=norm_cfg,
+                act_cfg=act_cfg) for _ in range(num_blocks)
+        ])
+        if channel_attention:
+            self.attention = ChannelAttention(2 * mid_channels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward function."""
+        x_short = self.short_conv(x)
+
+        x_main = self.main_conv(x)
+        x_main = self.blocks(x_main)
+
+        x_final = torch.cat((x_main, x_short), dim=1)
+
+        if self.channel_attention:
+            x_final = self.attention(x_final)
+        return self.final_conv(x_final)
 
 
 @MODELS.register_module()
@@ -67,6 +208,7 @@ class YOLOv5CSPDarknet(BaseBackbone):
 
     def __init__(self,
                  arch: str = 'P5',
+                 use_vargblock: bool = False,
                  plugins: Union[dict, List[dict]] = None,
                  deepen_factor: float = 1.0,
                  widen_factor: float = 1.0,
@@ -80,6 +222,7 @@ class YOLOv5CSPDarknet(BaseBackbone):
                  init_cfg: OptMultiConfig = None):
         super().__init__(
             self.arch_settings[arch],
+            use_vargblock,
             deepen_factor,
             widen_factor,
             input_channels=input_channels,
@@ -124,13 +267,22 @@ class YOLOv5CSPDarknet(BaseBackbone):
             norm_cfg=self.norm_cfg,
             act_cfg=self.act_cfg)
         stage.append(conv_layer)
-        csp_layer = CSPLayer(
-            out_channels,
-            out_channels,
-            num_blocks=num_blocks,
-            add_identity=add_identity,
-            norm_cfg=self.norm_cfg,
-            act_cfg=self.act_cfg)
+        if self.use_vargblock:
+            csp_layer = VarGCSPLayer(
+                out_channels,
+                out_channels,
+                num_blocks=num_blocks,
+                add_identity=add_identity,
+                norm_cfg=self.norm_cfg,
+                act_cfg=self.act_cfg)
+        else:
+            csp_layer = CSPLayer(
+                out_channels,
+                out_channels,
+                num_blocks=num_blocks,
+                add_identity=add_identity,
+                norm_cfg=self.norm_cfg,
+                act_cfg=self.act_cfg)
         stage.append(csp_layer)
         if use_spp:
             spp = SPPFBottleneck(
