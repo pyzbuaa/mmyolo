@@ -29,7 +29,7 @@ anchors = [
 # -----train val related-----
 # Base learning rate for optim_wrapper. Corresponding to 8xb16=128 bs
 base_lr = 0.01
-max_epochs = 200  # Maximum training epochs
+max_epochs = 300  # Maximum training epochs
 
 model_test_cfg = dict(
     # The config of multi-label for multi-class prediction.
@@ -99,12 +99,14 @@ model = dict(
         bgr_to_rgb=True),
     backbone=dict(
         type='YOLOv5CSPDarknet',
+        use_vargblock=True,
         deepen_factor=deepen_factor,
         widen_factor=widen_factor,
         norm_cfg=norm_cfg,
         act_cfg=dict(type='LeakyReLU', inplace=True)),
     neck=dict(
         type='YOLOv5PAFPN',
+        use_vargblock=True,
         deepen_factor=deepen_factor,
         widen_factor=widen_factor,
         in_channels=[256, 512, 1024],
