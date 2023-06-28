@@ -110,6 +110,7 @@ def main():
             deploy_model,
             fake_input,
             f,
+            do_constant_folding=True,
             input_names=['images'],
             output_names=output_names,
             opset_version=args.opset)
