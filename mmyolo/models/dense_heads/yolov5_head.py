@@ -110,6 +110,10 @@ class YOLOv5HeadModule(BaseModule):
             predictions, and objectnesses.
         """
         assert len(x) == self.num_levels
+        # feats = []
+        # for i, tensor in enumerate(x):
+        #     feats.append(self.forward_single(tensor, self.convs_pred[i]))
+        # return tuple(feats)
         return multi_apply(self.forward_single, x, self.convs_pred)
 
     def forward_single(self, x: Tensor,
@@ -117,6 +121,9 @@ class YOLOv5HeadModule(BaseModule):
         """Forward feature of a single scale level."""
 
         pred_map = convs(x)
+        # pred_map = pred_map.permute(0, 2, 3, 1).contiguous()
+        # return pred_map
+
         bs, _, ny, nx = pred_map.shape
         pred_map = pred_map.view(bs, self.num_base_priors, self.num_out_attrib,
                                  ny, nx)
